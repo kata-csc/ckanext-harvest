@@ -102,7 +102,7 @@ class HarvesterBase(SingletonPlugin):
             self._save_gather_error('%r' % e.message, harvest_job)
 
 
-    def _create_or_update_package(self, package_dict, harvest_object):
+    def _create_or_update_package(self, package_dict, harvest_object, schema=None):
         '''
         Creates a new package or updates an exisiting one according to the
         package dictionary provided. The package dictionary should look like
@@ -123,8 +123,10 @@ class HarvesterBase(SingletonPlugin):
         for rest api based dicts
         '''
         try:
-            # Change default schema
-            schema = default_create_package_schema()
+            if not schema:
+                schema = default_create_package_schema()
+
+            # Change schema
             schema['id'] = [ignore_missing, unicode]
             schema['__junk'] = [ignore]
 
