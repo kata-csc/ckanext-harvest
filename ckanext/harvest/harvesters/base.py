@@ -217,6 +217,7 @@ class HarvesterBase(SingletonPlugin):
             log.exception(e)
             self._save_object_error('Invalid package with GUID %s: %r'%(harvest_object.guid,e.error_dict),harvest_object,'Import')
         except Exception, e:
+            model.Session.rollback()  # REMOVE THIS WHEN TICKET KATA-450 IS OK!
             log.exception(e)
             self._save_object_error('%r'%e,harvest_object,'Import')
 
