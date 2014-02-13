@@ -10,7 +10,8 @@ from ckan import model
 from ckan.model import Session, Package
 from ckan.logic import ValidationError, NotFound, get_action
 
-from ckan.logic.schema import default_create_package_schema
+from ckan.logic.schema import (default_create_package_schema,
+                               default_show_package_schema)
 from ckan.lib.navl.validators import ignore_missing,ignore
 from ckan.lib.munge import munge_title_to_name,substitute_ascii_equivalents
 
@@ -102,7 +103,7 @@ class HarvesterBase(SingletonPlugin):
             self._save_gather_error('%r' % e.message, harvest_job)
 
 
-    def _create_or_update_package(self, package_dict, harvest_object, schema=None):
+    def _create_or_update_package(self, package_dict, harvest_object, schema=None, s_schema=None):
         '''
         Creates a new package or updates an exisiting one according to the
         package dictionary provided. The package dictionary should look like
@@ -125,10 +126,14 @@ class HarvesterBase(SingletonPlugin):
         try:
             if not schema:
                 schema = default_create_package_schema()
+            if not s_schema:
+                s_schema = default_show_package_schema()
 
-            # Change schema
+            # Change schema(s)
             schema['id'] = [ignore_missing, unicode]
             schema['__junk'] = [ignore]
+            s_schema['id'] = [ignore_missing, unicode]
+            s_schema['__junk'] = [ignore]
 
             # Check API version
             if self.config:
@@ -161,6 +166,7 @@ class HarvesterBase(SingletonPlugin):
             data_dict = {}
             data_dict['id'] = package_dict['id']
             try:
+                context['schema'] = s_schema
                 existing_package_dict = get_action('package_show')(context, data_dict)
                 # Check modified date
                 if not 'metadata_modified' in package_dict or \
@@ -170,6 +176,7 @@ class HarvesterBase(SingletonPlugin):
                     context.update({'id':package_dict['id']})
                     package_dict.setdefault('name',
                             existing_package_dict['name'])
+                    context['schema'] = schema
                     new_package = get_action('package_update_rest')(context, package_dict)
 
                 else:
