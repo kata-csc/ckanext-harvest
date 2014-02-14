@@ -153,7 +153,7 @@ class HarvesterBase(SingletonPlugin):
                 'session': Session,
                 'user': user_name,
                 'api_version': api_version,
-                'schema': schema,
+                # 'schema': schema,
                 'ignore_auth': True,
             }
 
@@ -214,6 +214,7 @@ class HarvesterBase(SingletonPlugin):
                 model.Session.execute('SET CONSTRAINTS harvest_object_package_id_fkey DEFERRED')
                 model.Session.flush()
 
+                context['schema'] = schema
                 new_package = get_action('package_create_rest')(context, package_dict)
 
             Session.commit()
