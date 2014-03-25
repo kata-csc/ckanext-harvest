@@ -338,6 +338,8 @@ class CKANHarvester(HarvesterBase):
             # Set default groups if needed
             default_groups = self.config.get('default_groups', [])
             if default_groups:
+                if not 'groups' in package_dict:
+                    package_dict['groups'] = []
                 package_dict['groups'].extend([g for g in default_groups if g not in package_dict['groups']])
 
             # Find any extras whose values are not strings and try to convert
@@ -370,6 +372,11 @@ class CKANHarvester(HarvesterBase):
                                      dataset_id=package_dict['id'])
 
                         package_dict['extras'][key] = value
+
+            # Clear remote url_type for resources (eg datastore, upload) as we
+            # are only creating normal resources with links to the remote ones
+            for resource in package_dict.get('resources', []):
+                resource.pop('url_type', None)
 
             result = self._create_or_update_package(package_dict,harvest_object)
 

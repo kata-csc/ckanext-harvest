@@ -56,7 +56,9 @@ class Harvest(p.SingletonPlugin, DefaultDatasetForm):
 
     def before_view(self, data_dict):
 
-        if not 'type' in data_dict or data_dict['type'] != DATASET_TYPE_NAME:
+        # check_ckan_version should be more clever than this
+        if p.toolkit.check_ckan_version(max_version='2.1.99') and (
+           not 'type' in data_dict or data_dict['type'] != DATASET_TYPE_NAME):
             # This is a normal dataset, check if it was harvested and if so, add
             # info about the HarvestObject and HarvestSource
             harvest_object = model.Session.query(HarvestObject) \
@@ -84,7 +86,7 @@ class Harvest(p.SingletonPlugin, DefaultDatasetForm):
                 log.error('Harvest source not found for dataset {0}'.format(data_dict['id']))
                 return data_dict
 
-            data_dict['status'] = harvest_logic.action.get.harvest_source_show_status(context, {'id': source.id})
+            data_dict['status'] = p.toolkit.get_action('harvest_source_show_status')(context, {'id': source.id})
 
         elif not 'type' in data_dict or data_dict['type'] != DATASET_TYPE_NAME:
             # This is a normal dataset, check if it was harvested and if so, add
@@ -95,7 +97,21 @@ class Harvest(p.SingletonPlugin, DefaultDatasetForm):
                     .filter(HarvestObject.current==True) \
                     .first()
 
-            # validate is false is passed only on indexing.
+            if context.get('for_edit') and 'extras' in  data_dict:
+                # If we are editing the dataset, check if the harvest extras
+                # are there, and if so, remove them. This can happen eg when
+                # doing resource_update, which calls package_show
+                data_dict['extras'][:] = [e for e in data_dict.get('extras', [])
+                                          if not e['key']
+                                          in ('harvest_object_id', 'harvest_source_id', 'harvest_source_title',)]
+
+
+            # We only want to add these extras at index time so they are part
+            # of the cached data_dict used to display, search results etc. We
+            # don't want them added when editing the dataset, otherwise we get
+            # duplicated key errors.
+            # The only way to detect indexing right now is checking that
+            # validate is set to False.
             if harvest_object and not context.get('validate', True):
                 for key, value in [
                     ('harvest_object_id', harvest_object.id),
