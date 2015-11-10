@@ -97,10 +97,10 @@ class Harvest(p.SingletonPlugin, DefaultDatasetForm):
                     .filter(HarvestObject.current==True) \
                     .first()
 
-            if context.get('for_edit') and 'extras' in  data_dict:
-                # If we are editing the dataset, check if the harvest extras
-                # are there, and if so, remove them. This can happen eg when
-                # doing resource_update, which calls package_show
+            # If the harvest extras are there, remove them. This can happen eg
+            # when calling package_update or resource_update, which call
+            # package_show
+            if data_dict.get('extras'):
                 data_dict['extras'][:] = [e for e in data_dict.get('extras', [])
                                           if not e['key']
                                           in ('harvest_object_id', 'harvest_source_id', 'harvest_source_title',)]
@@ -289,11 +289,8 @@ def _get_logic_functions(module_root, logic_functions = {}):
 
     for module_name in ['get', 'create', 'update','delete']:
         module_path = '%s.%s' % (module_root, module_name,)
-        try:
-            module = __import__(module_path)
-        except ImportError:
-            log.debug('No auth module for action "{0}"'.format(module_name))
-            continue
+
+        module = __import__(module_path)
 
         for part in module_path.split('.')[1:]:
             module = getattr(module, part)

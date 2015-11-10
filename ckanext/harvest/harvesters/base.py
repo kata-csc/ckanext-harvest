@@ -4,6 +4,7 @@ import uuid
 
 from sqlalchemy.sql import update,and_, bindparam
 from sqlalchemy.exc import InvalidRequestError
+from pylons import config
 
 from ckan import plugins as p
 from ckan import model
@@ -38,6 +39,8 @@ class HarvesterBase(SingletonPlugin):
     implements(IHarvester)
 
     config = None
+
+    _user_name = None
 
     def _gen_new_name(self, title):
         '''
@@ -81,6 +84,46 @@ class HarvesterBase(SingletonPlugin):
             log_message = '{0}, line {1}'.format(message,line) if line else message
             log.debug(log_message)
 
+    def _get_user_name(self):
+        '''
+        Returns the name of the user that will perform the harvesting actions
+        (deleting, updating and creating datasets)
+
+        By default this will be the old 'harvest' user to maintain
+        compatibility. If not present, the internal site admin user will be
+        used. This is the recommended setting, but if necessary it can be
+        overridden with the `ckanext.harvest.user_name` config option:
+
+           ckanext.harvest.user_name = harvest
+
+        '''
+        if self._user_name:
+            return self._user_name
+
+        config_user_name = config.get('ckanext.harvest.user_name')
+        if config_user_name:
+            self._user_name = config_user_name
+            return self._user_name
+
+        context = {'model': model,
+                   'ignore_auth': True,
+                   }
+
+        # Check if 'harvest' user exists and if is a sysadmin
+        try:
+            user_harvest = p.toolkit.get_action('user_show')(
+                context, {'id': 'harvest'})
+            if user_harvest['sysadmin']:
+                self._user_name = 'harvest'
+                return self._user_name
+        except p.toolkit.ObjectNotFound:
+            pass
+
+        context['defer_commit'] = True  # See ckan/ckan#1714
+        self._site_user = p.toolkit.get_action('get_site_user')(context, {})
+        self._user_name = self._site_user['name']
+
+        return self._user_name
 
     def _create_harvest_objects(self, remote_ids, harvest_job):
         '''
@@ -142,13 +185,10 @@ class HarvesterBase(SingletonPlugin):
                     api_version = int(self.config.get('api_version', 2))
                 except ValueError:
                     raise ValueError('api_version must be an integer')
-
-                #TODO: use site user when available
-                user_name = self.config.get('user', u'harvest')
             else:
                 api_version = 2
-                user_name = u'harvest'
 
+            user_name = self._get_user_name()
             context = {
                 'model': model,
                 'session': Session,
@@ -160,7 +200,7 @@ class HarvesterBase(SingletonPlugin):
 
             if self.config and self.config.get('clean_tags', False):
                 tags = package_dict.get('tags', [])
-                tags = [munge_tag(t) for t in tags]
+                tags = [munge_tag(t) for t in tags if munge_tag(t) != '']
                 tags = list(set(tags))
                 package_dict['tags'] = tags
 
@@ -170,6 +210,10 @@ class HarvesterBase(SingletonPlugin):
             try:
                 context['schema'] = s_schema
                 existing_package_dict = get_action('package_show')(context, data_dict)
+
+                # In case name has been modified when first importing. See issue #101.
+                package_dict['name'] = existing_package_dict['name']
+
                 # Check modified date
                 if not 'metadata_modified' in package_dict or \
                    package_dict['metadata_modified'] > existing_package_dict.get('metadata_modified'):
@@ -206,8 +250,11 @@ class HarvesterBase(SingletonPlugin):
                 # exception
                 context.pop('__auth_audit', None)
 
-                # Set name if not already there
-                package_dict.setdefault('name', self._gen_new_name(package_dict['title']))
+                # Set name for new package to prevent name conflict, see issue #117
+                if package_dict.get('name', None):
+                    package_dict['name'] = self._gen_new_name(package_dict['name'])
+                else:
+                    package_dict['name'] = self._gen_new_name(package_dict['title'])
 
                 log.info('Package with GUID %s does not exist, let\'s create it' % harvest_object.guid)
                 harvest_object.current = True

@@ -3,6 +3,7 @@ from pprint import pprint
 
 from ckan import model
 from ckan.logic import get_action, ValidationError
+from ckanext.harvest.logic import NoNewHarvestJobError
 
 from ckan.lib.cli import CkanCommand
 
@@ -18,7 +19,10 @@ class Harvester(CkanCommand):
         - create new harvest source
 
       harvester rmsource {id}
-        - remove (inactivate) a harvester source
+        - remove (deactivate) a harvester source, whilst leaving any related datasets, jobs and objects
+
+      harvester clearsource {id}
+        - clears all datasets, jobs and objects related to a harvest source, but keeps the source itself
 
       harvester sources [all]
         - lists harvest sources
@@ -42,10 +46,13 @@ class Harvester(CkanCommand):
       harvester purge_queues
         - removes all jobs from fetch and gather queue
 
-      harvester [-j] [--segments={segments}] import [{source-id}]
-        - perform the import stage with the last fetched objects, optionally belonging to a certain source.
-          Please note that no objects will be fetched from the remote server. It will only affect
-          the last fetched objects already present in the database.
+      harvester [-j] [-o] [--segments={segments}] import [{source-id}]
+        - perform the import stage with the last fetched objects, for a certain
+          source or a single harvest object. Please note that no objects will
+          be fetched from the remote server. It will only affect the objects
+          already present in the database.
+
+          To perform it on a particular object use the -o flag.
 
           If the -j flag is provided, the objects are not joined to existing datasets. This may be useful
           when importing objects for the first time.
@@ -79,6 +86,12 @@ class Harvester(CkanCommand):
         self.parser.add_option('-j', '--no-join-datasets', dest='no_join_datasets',
             action='store_true', default=False, help='Do not join harvest objects to existing datasets')
 
+        self.parser.add_option('-o', '--harvest-object-id', dest='harvest_object_id',
+            default=False, help='Id of the harvest object to which perfom the import stage')
+
+        self.parser.add_option('-p', '--package-id', dest='package_id',
+            default=False, help='Id of the package whose harvest object to perfom the import stage for')
+
         self.parser.add_option('--segments', dest='segments',
             default=False, help=
 '''A string containing hex digits that represent which of
@@ -101,8 +114,10 @@ class Harvester(CkanCommand):
         cmd = self.args[0]
         if cmd == 'source':
             self.create_harvest_source()
-        elif cmd == "rmsource":
+        elif cmd == 'rmsource':
             self.remove_harvest_source()
+        elif cmd == 'clearsource':
+            self.clear_harvest_source()
         elif cmd == 'sources':
             self.list_harvest_sources()
         elif cmd == 'job':
@@ -113,17 +128,19 @@ class Harvester(CkanCommand):
             self.run_harvester()
         elif cmd == 'gather_consumer':
             import logging
-            from ckanext.harvest.queue import get_gather_consumer, gather_callback
+            from ckanext.harvest.queue import (get_gather_consumer,
+                gather_callback, get_gather_queue_name)
             logging.getLogger('amqplib').setLevel(logging.INFO)
             consumer = get_gather_consumer()
-            for method, header, body in consumer.consume(queue='ckan.harvest.gather'):
+            for method, header, body in consumer.consume(queue=get_gather_queue_name()):
                 gather_callback(consumer, method, header, body)
         elif cmd == 'fetch_consumer':
             import logging
             logging.getLogger('amqplib').setLevel(logging.INFO)
-            from ckanext.harvest.queue import get_fetch_consumer, fetch_callback
+            from ckanext.harvest.queue import (get_fetch_consumer, fetch_callback,
+                get_fetch_queue_name)
             consumer = get_fetch_consumer()
-            for method, header, body in consumer.consume(queue='ckan.harvest.fetch'):
+            for method, header, body in consumer.consume(queue=get_fetch_queue_name()):
                fetch_callback(consumer, method, header, body)
         elif cmd == 'purge_queues':
             from ckanext.harvest.queue import purge_queues
@@ -239,6 +256,16 @@ class Harvester(CkanCommand):
         get_action('harvest_source_delete')(context,{'id':source_id})
         print 'Removed harvest source: %s' % source_id
 
+    def clear_harvest_source(self):
+        if len(self.args) >= 2:
+            source_id = unicode(self.args[1])
+        else:
+            print 'Please provide a source id'
+            sys.exit(1)
+        context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
+        get_action('harvest_source_clear')(context,{'id':source_id})
+        print 'Cleared harvest source: %s' % source_id
+
     def list_harvest_sources(self):
         if len(self.args) >= 2 and self.args[1] == 'all':
             data_dict = {}
@@ -275,9 +302,10 @@ class Harvester(CkanCommand):
 
     def run_harvester(self):
         context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
-        jobs = get_action('harvest_jobs_run')(context,{})
-
-        #print 'Sent %s jobs to the gather queue' % len(jobs)
+        try:
+            jobs = get_action('harvest_jobs_run')(context,{})
+        except NoNewHarvestJobError:
+            print 'There are no new harvest jobs to run.'
 
     def import_stage(self):
 
@@ -291,9 +319,13 @@ class Harvester(CkanCommand):
                    'segments': self.options.segments}
 
 
-        objs = get_action('harvest_objects_import')(context,{'source_id':source_id})
+        objs_count = get_action('harvest_objects_import')(context,{
+                'source_id': source_id,
+                'harvest_object_id': self.options.harvest_object_id,
+                'package_id': self.options.package_id,
+                })
 
-        print '%s objects reimported' % len(objs)
+        print '%s objects reimported' % objs_count
 
     def create_harvest_job_all(self):
         context = {'model': model, 'user': self.admin_user['name'], 'session':model.Session}
