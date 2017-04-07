@@ -9,9 +9,10 @@ from ckan import plugins as p
 from ckan import model
 from ckan.model import Session, Package, PACKAGE_NAME_MAX_LENGTH
 
-from ckan.logic.schema import default_create_package_schema
-from ckan.lib.navl.validators import ignore_missing, ignore
-from ckan.lib.munge import munge_title_to_name, substitute_ascii_equivalents
+from ckan.logic.schema import (default_create_package_schema,
+                               default_show_package_schema)
+from ckan.lib.navl.validators import ignore_missing,ignore
+from ckan.lib.munge import munge_title_to_name,substitute_ascii_equivalents
 
 from ckanext.harvest.model import (HarvestObject, HarvestGatherError,
                                    HarvestObjectError)
@@ -216,8 +217,8 @@ class HarvesterBase(SingletonPlugin):
         except Exception, e:
             self._save_gather_error('%r' % e.message, harvest_job)
 
-    def _create_or_update_package(self, package_dict, harvest_object,
-                                  package_dict_form='rest'):
+
+    def _create_or_update_package(self, package_dict, harvest_object, schema=None, s_schema=None, package_dict_form='rest'):
         '''
         Creates a new package or updates an exisiting one according to the
         package dictionary provided.
@@ -262,10 +263,16 @@ class HarvesterBase(SingletonPlugin):
         '''
         assert package_dict_form in ('rest', 'package_show')
         try:
-            # Change default schema
-            schema = default_create_package_schema()
+            if not schema:
+                schema = default_create_package_schema()
+            if not s_schema:
+                s_schema = default_show_package_schema()
+
+            # Change schema(s)
             schema['id'] = [ignore_missing, unicode]
             schema['__junk'] = [ignore]
+            s_schema['id'] = [ignore_missing, unicode]
+            s_schema['__junk'] = [ignore]
 
             # Check API version
             if self.config:
@@ -282,7 +289,7 @@ class HarvesterBase(SingletonPlugin):
                 'session': Session,
                 'user': user_name,
                 'api_version': api_version,
-                'schema': schema,
+                # 'schema': schema,
                 'ignore_auth': True,
             }
 
@@ -294,8 +301,9 @@ class HarvesterBase(SingletonPlugin):
 
             # Check if package exists
             try:
+                context['schema'] = s_schema
                 # _find_existing_package can be overridden if necessary
-                existing_package_dict = self._find_existing_package(package_dict)
+                existing_package_dict = self._find_existing_package(package_dict, s_schema)
 
                 # In case name has been modified when first importing. See issue #101.
                 package_dict['name'] = existing_package_dict['name']
@@ -308,6 +316,9 @@ class HarvesterBase(SingletonPlugin):
                     context.update({'id':package_dict['id']})
                     package_dict.setdefault('name',
                                             existing_package_dict['name'])
+
+                    if package_dict_form == 'rest':
+                        context['schema'] = schema
 
                     new_package = p.toolkit.get_action(
                         'package_update' if package_dict_form == 'package_show'
@@ -356,6 +367,9 @@ class HarvesterBase(SingletonPlugin):
                 model.Session.execute('SET CONSTRAINTS harvest_object_package_id_fkey DEFERRED')
                 model.Session.flush()
 
+                if package_dict_form == 'rest':
+                    context['schema'] = schema
+
                 new_package = p.toolkit.get_action(
                     'package_create' if package_dict_form == 'package_show'
                     else 'package_create_rest')(context, package_dict)
@@ -368,14 +382,17 @@ class HarvesterBase(SingletonPlugin):
             log.exception(e)
             self._save_object_error('Invalid package with GUID %s: %r'%(harvest_object.guid,e.error_dict),harvest_object,'Import')
         except Exception, e:
+            model.Session.rollback()  # REMOVE THIS WHEN TICKET KATA-450 IS OK!
             log.exception(e)
             self._save_object_error('%r'%e,harvest_object,'Import')
 
         return None
 
-    def _find_existing_package(self, package_dict):
+    def _find_existing_package(self, package_dict, s_schema=None):
         data_dict = {'id': package_dict['id']}
         package_show_context = {'model': model, 'session': Session,
                                 'ignore_auth': True}
+        if s_schema:
+            package_show_context['schema'] = s_schema
         return p.toolkit.get_action('package_show')(
             package_show_context, data_dict)

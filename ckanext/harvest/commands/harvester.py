@@ -556,10 +556,10 @@ class Harvester(CkanCommand):
         from datetime import datetime, timedelta
         from pylons import config
         from ckanext.harvest.model import clean_harvest_log
-        
+
         # Log time frame - in days
         log_timeframe = toolkit.asint(config.get('ckan.harvest.log_timeframe', 30))
         condition = datetime.utcnow() - timedelta(days=log_timeframe)
-        
+
         # Delete logs older then the given date
         clean_harvest_log(condition=condition)
